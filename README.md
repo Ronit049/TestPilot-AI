@@ -71,7 +71,7 @@ Project Diagram :
 | Good for hackathon demo           | ✅          | ✅                                 | ✅                                   |
 | Requires their respective API key | Yes         | Yes                                 | Yes                                 |
 | Our current code                  | ✅          | ❌                                 | ❌                                   |
-```
+
 
 ## Demo
 
