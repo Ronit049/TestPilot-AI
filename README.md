@@ -25,7 +25,7 @@ Run:
 ```bash
 streamlit run app.py
 ```
-Project Diagram 
+Project Diagram :
 ```
              👨‍💻 DEVELOPER
                    │
