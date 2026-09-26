@@ -62,6 +62,16 @@ Project Diagram :
             └───────◄────────┘
 
 ```
+# Why not Claude or GPT?
+| Factor                            | Groq        | OpenAI GPT                          | Claude                              |
+| --------------------------------- | ----------- | ----------------------------------- | ----------------------------------- |
+| API integration                   | Simple      | Simple                              | Simple                              |
+| Fast inference                    | Very strong | Strong                              | Strong                              |
+| Code generation                   | Good        | Good/very strong depending on model | Good/very strong depending on model |
+| Good for hackathon demo           | ✅          | ✅                                 | ✅                                   |
+| Requires their respective API key | Yes         | Yes                                 | Yes                                 |
+| Our current code                  | ✅          | ❌                                 | ❌                                   |
+```
 
 ## Demo
 
