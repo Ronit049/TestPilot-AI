@@ -31,3 +31,25 @@ streamlit run app.py
 Paste Python code, then click **Generate & Run Tests**. The app analyzes the code, generates pytest tests, executes them, and if they fail, asks the AI to improve the tests and runs them again.
 
 This is a controlled hackathon prototype. Do not execute arbitrary untrusted code with this local subprocess runner in production.
+
+## 👨‍💻 About the Author
+
+Hi, I'm **Ronit Raj**, a Computer Science student and aspiring **Software & AI Developer** passionate about building practical projects and exploring **Agentic AI, Generative AI, Web Development, and Data Structures & Algorithms**.
+
+I enjoy turning ideas into real-world applications, experimenting with new technologies, and continuously improving my problem-solving and development skills.
+
+### 🚀 What I Work With
+- 🐍 Python | C++ | Java | JavaScript
+- 🤖 Generative AI | Agentic AI | LLM Applications
+- 🌐 HTML | CSS | React | Tailwind CSS
+- 🧠 Data Structures & Algorithms
+- 🗄️ SQL | MySQL | MongoDB
+- 🛠️ Git | GitHub | Linux | FastAPI
+
+### 🔗 Connect With Me
+
+- **GitHub:** [Ronit049](https://github.com/Ronit049)
+- **LinkedIn:** [Ronit Raj](www.linkedin.com/in/ronit-raj7497)
+- **Portfolio:** [rsr-portfolio.vercel.app](https://rsr-portfolio.vercel.app/)
+
+> 💡 *Building, learning, and improving — one project at a time.*
