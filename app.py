@@ -1,8 +1,8 @@
 import os
 import re
 import subprocess
+import sys
 import tempfile
-from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -10,152 +10,321 @@ from groq import Groq
 
 load_dotenv()
 
-st.set_page_config(page_title="TestPilot AI", page_icon="🧪", layout="wide")
+st.set_page_config(
+    page_title="TestPilot AI",
+    page_icon="🧪",
+    layout="wide"
+)
 
-SYSTEM_PROMPT = '''You are TestPilot, an AI software testing agent.
-Your job is to analyze Python source code, generate pytest tests, inspect test failures,
-and improve the tests. Return practical, runnable Python code.
-Never modify the user's source code unless explicitly asked.
-'''
+# ---------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------
 
+MODEL = "openai/gpt-oss-20b"
+
+SYSTEM_PROMPT = """
+You are TestPilot AI, an expert Python software testing agent.
+
+Your job is to:
+1. Analyze Python source code.
+2. Identify functions, branches, edge cases and invalid inputs.
+3. Generate high-quality pytest test cases.
+4. Analyze test execution failures.
+5. Improve the generated tests based on actual execution feedback.
+
+Always return clean Python code when code is requested.
+Do not use markdown code fences when returning test code.
+Generated tests must import the source module using:
+
+from target import ...
+
+The source file will always be named target.py.
+"""
+
+
+# ---------------------------------------------------------
+# Session State
+# ---------------------------------------------------------
+
+if "analysis" not in st.session_state:
+    st.session_state.analysis = ""
+
+if "generated_tests" not in st.session_state:
+    st.session_state.generated_tests = ""
+
+if "execution_result" not in st.session_state:
+    st.session_state.execution_result = ""
+
+if "final_code" not in st.session_state:
+    st.session_state.final_code = ""
+
+
+# ---------------------------------------------------------
+# Groq Client
+# ---------------------------------------------------------
 
 def get_client():
     api_key = os.getenv("GROQ_API_KEY")
+
     if not api_key:
-        return None
+        st.error(
+            "GROQ_API_KEY not found. "
+            "Please create a .env file and add your Groq API key."
+        )
+        st.stop()
+
     return Groq(api_key=api_key)
 
 
-def ask_llm(prompt: str) -> str:
+# ---------------------------------------------------------
+# AI Function
+# ---------------------------------------------------------
+
+def ask_ai(prompt):
+
     client = get_client()
-    if client is None:
-        raise RuntimeError("GROQ_API_KEY is missing. Add it to your .env file.")
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        temperature=0.2,
+        model=MODEL,
+        temperature=0.1,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
     )
+
     return response.choices[0].message.content
 
 
-def clean_code(text: str) -> str:
-    match = re.search(r"```python\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"```\s*(.*?)```", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
+# ---------------------------------------------------------
+# Clean AI Code
+# ---------------------------------------------------------
 
+def clean_code(code):
 
-def analyze_code(source_code: str) -> str:
-    prompt = f'''Analyze this Python source code for testing purposes.
+    code = code.strip()
 
-Identify:
-1. Functions/classes that should be tested.
-2. Normal cases.
-3. Edge cases.
-4. Invalid-input cases.
-5. Important branches that may need coverage.
+    # Remove markdown code fences if AI returns them
+    code = re.sub(r"^```python\s*", "", code)
+    code = re.sub(r"^```\s*", "", code)
+    code = re.sub(r"\s*```$", "", code)
 
-Give a concise testing plan.
+    return code.strip()
+
+def limit_test_code(code):
+    lines = code.splitlines()
+
+    # Remove excessive blank lines
+    cleaned = []
+    previous_blank = False
+
+    for line in lines:
+        if not line.strip():
+            if previous_blank:
+                continue
+            previous_blank = True
+        else:
+            previous_blank = False
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned).strip()
+
+# ---------------------------------------------------------
+# Analyze Source Code
+# ---------------------------------------------------------
+
+def analyze_code(source_code):
+
+    prompt = f"""
+Analyze the following Python source code.
 
 SOURCE CODE:
-```python
+
 {source_code}
-```'''
-    return ask_llm(prompt)
+
+Provide:
+
+1. Functions/classes present
+2. Inputs and outputs
+3. Normal cases
+4. Edge cases
+5. Invalid inputs
+6. Important branches
+7. Potential bugs or risky assumptions
+8. Recommended test scenarios
+
+Do not generate test code yet.
+"""
+
+    return ask_ai(prompt)
 
 
-def generate_tests(source_code: str, analysis: str) -> str:
-    prompt = f'''Generate a runnable pytest test file for the following Python source code.
+# ---------------------------------------------------------
+# Generate Tests
+# ---------------------------------------------------------
 
-Rules:
-- The source file is ALWAYS named `target.py`.
-- Import functions ONLY using:
-  from target import ...
-- Generate runnable pytest code.
-- Do not use `mymodule`.
-- Do not use markdown outside the code block.
-- Return ONLY the pytest Python code.
+def generate_tests(source_code, analysis):
 
-TESTING ANALYSIS:
+    prompt = f"""
+You are a concise Python testing agent.
+
+SOURCE CODE:
+{source_code}
+
+ANALYSIS:
 {analysis}
 
-SOURCE CODE:
-```python
-{source_code}
-```'''
-    return clean_code(ask_llm(prompt))
-
-
-def improve_tests(source_code: str, test_code: str, test_output: str) -> str:
-    prompt = f'''The generated pytest suite has produced the following execution result.
-
-Improve the tests while preserving the original testing goal.
+Generate a SMALL and CLEAN pytest test file.
 
 Rules:
-- Fix incorrect imports, assertions, assumptions, or test inputs.
-- Add a missing edge case if the failure reveals one.
-- Return ONLY the complete replacement pytest file.
-- Assume the source file is `target.py`.
+- Create only the most important tests.
+- Maximum 3-5 test functions.
+- Prefer simple readable tests.
+- Cover normal case and important edge case.
+- Do not test every possible input.
+- Do not create unnecessary helper functions.
+- Do not create long explanations.
+- Import only from `target`.
+- Keep the generated code short.
+- Return ONLY Python code.
+- Do NOT use markdown code fences.
 
-SOURCE CODE:
-```python
-{source_code}
-```
+The final test code should be roughly similar in size and simplicity
+to the input code.
+"""
 
-CURRENT TESTS:
-```python
-{test_code}
-```
+    return limit_test_code(clean_code(ask_ai(prompt)))
 
-TEST EXECUTION RESULT:
-```text
-{test_output}
-```'''
-    return clean_code(ask_llm(prompt))
+# ---------------------------------------------------------
+# Run Pytest
+# ---------------------------------------------------------
 
+def run_tests(source_code, test_code):
 
-def run_tests(source_code: str, test_code: str):
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        (tmp_path / "target.py").write_text(source_code, encoding="utf-8")
-        (tmp_path / "test_generated.py").write_text(test_code, encoding="utf-8")
+    with tempfile.TemporaryDirectory() as temp_dir:
+
+        target_path = os.path.join(
+            temp_dir,
+            "target.py"
+        )
+
+        test_path = os.path.join(
+            temp_dir,
+            "test_generated.py"
+        )
+
+        # Write source code
+        with open(
+            target_path,
+            "w",
+            encoding="utf-8"
+        ) as f:
+            f.write(source_code)
+
+        # Write generated tests
+        with open(
+            test_path,
+            "w",
+            encoding="utf-8"
+        ) as f:
+            f.write(test_code)
+
         try:
+
             result = subprocess.run(
-                ["python", "-m", "pytest", "test_generated.py", "-q"],
-                cwd=tmp,
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "test_generated.py",
+                    "-q"
+                ],
+                cwd=temp_dir,
                 capture_output=True,
                 text=True,
-                timeout=20,
+                timeout=20
             )
-            return {
-                "passed": result.returncode == 0,
-                "returncode": result.returncode,
-                "output": (result.stdout + "\n" + result.stderr).strip(),
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "passed": False,
-                "returncode": -1,
-                "output": "Test execution timed out after 20 seconds.",
-            }
 
+            output = (
+                result.stdout
+                + "\n"
+                + result.stderr
+            )
+
+            return output.strip()
+
+        except subprocess.TimeoutExpired:
+
+            return "ERROR: Test execution timed out."
+
+
+# ---------------------------------------------------------
+# Improve Tests
+# ---------------------------------------------------------
+
+def improve_source_code(
+    source_code,
+    test_code,
+    execution_result
+):
+
+    prompt = f"""
+You are TestPilot AI's Code Improvement Agent.
+
+ORIGINAL SOURCE CODE:
+{source_code}
+
+GENERATED TESTS:
+{test_code}
+
+TEST EXECUTION RESULT:
+{execution_result}
+
+Improve the ORIGINAL SOURCE CODE based on the test results.
+
+Rules:
+- Return the complete improved source code.
+- Do NOT return pytest tests.
+- Do NOT return test cases.
+- Do NOT include explanations.
+- Do NOT use markdown code fences.
+- Keep the original function names.
+- Make only necessary changes.
+- Keep the code clean and concise.
+- Return ONLY valid Python source code.
+"""
+
+    return clean_code(ask_ai(prompt))
+
+# ---------------------------------------------------------
+# UI
+# ---------------------------------------------------------
 
 st.title("🧪 TestPilot AI")
-st.caption("Self-Improving Test Generation Agent — PS-10")
-st.info("Workflow: Code Analyzer → Test Generator → Test Runner → Failure Analyzer → Test Improver")
 
-with st.sidebar:
-    st.header("⚙️ Setup")
-    st.code("GROQ_API_KEY=your_api_key_here", language="text")
-    st.code("pip install -r requirements.txt", language="bash")
-    st.code("streamlit run app.py", language="bash")
+st.markdown(
+    """
+### Self-Improving Test Generation Agent
+
+**Analyze → Generate → Execute → Observe → Improve**
+"""
+)
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# Source Code Input
+# ---------------------------------------------------------
+
+st.subheader("💻 Enter Python Source Code")
 
 default_code = """def add(a, b):
     return a + b
@@ -165,86 +334,235 @@ def divide(a, b):
     if b == 0:
         raise ValueError("Cannot divide by zero")
     return a / b
-
-
-def is_even(n):
-    return n % 2 == 0
 """
 
-source_code = st.text_area("Paste your Python source code", value=default_code, height=300)
+source_code = st.text_area(
+    "Python source code",
+    value=default_code,
+    height=250,
+    placeholder="Paste your Python code here..."
+)
 
-if "analysis" not in st.session_state:
-    st.session_state.analysis = ""
-if "tests" not in st.session_state:
-    st.session_state.tests = ""
-if "result" not in st.session_state:
-    st.session_state.result = None
-if "iterations" not in st.session_state:
-    st.session_state.iterations = 0
 
-col1, col2 = st.columns(2)
-with col1:
-    analyze_btn = st.button("🔍 Analyze Code", use_container_width=True)
-with col2:
-    generate_btn = st.button("🚀 Generate & Run Tests", use_container_width=True)
+# ---------------------------------------------------------
+# Main Button
+# ---------------------------------------------------------
 
-if analyze_btn:
+if st.button(
+    "🚀 Generate, Run & Improve",
+    type="primary",
+    use_container_width=True
+):
+
     if not source_code.strip():
-        st.warning("Please enter Python code.")
-    else:
-        with st.spinner("Analyzer Agent is analyzing the code..."):
-            try:
-                st.session_state.analysis = analyze_code(source_code)
-                st.success("Analysis completed.")
-            except Exception as e:
-                st.error(str(e))
 
-if generate_btn:
-    if not source_code.strip():
-        st.warning("Please enter Python code.")
-    else:
-        try:
-            with st.spinner("Agent 1: analyzing code..."):
-                analysis = analyze_code(source_code)
-                st.session_state.analysis = analysis
-            with st.spinner("Agent 2: generating pytest tests..."):
-                tests = generate_tests(source_code, analysis)
-                st.session_state.tests = tests
-            with st.spinner("Test Runner: executing generated tests..."):
-                result = run_tests(source_code, tests)
-                st.session_state.result = result
+        st.warning("Please enter Python source code.")
 
-            if not result["passed"]:
-                with st.spinner("Agent 3: analyzing failure and improving tests..."):
-                    improved_tests = improve_tests(source_code, tests, result["output"])
-                st.session_state.tests = improved_tests
-                st.session_state.iterations = 1
-                with st.spinner("Test Runner: running improved tests..."):
-                    st.session_state.result = run_tests(source_code, improved_tests)
-            else:
-                st.session_state.iterations = 0
-            st.success("Agent workflow completed.")
-        except Exception as e:
-            st.error(f"Workflow error: {e}")
+    else:
+
+        # Reset old results
+        st.session_state.analysis = ""
+        st.session_state.generated_tests = ""
+        st.session_state.execution_result = ""
+        st.session_state.final_code = ""
+
+        # -------------------------------------------------
+        # Step 1: Analyze
+        # -------------------------------------------------
+
+        with st.spinner("🧠 AI is analyzing your code..."):
+
+            analysis = analyze_code(source_code)
+
+        st.session_state.analysis = analysis
+
+        # -------------------------------------------------
+        # Step 2: Generate Tests
+        # -------------------------------------------------
+
+        with st.spinner("🧪 AI is generating pytest tests..."):
+
+            generated_tests = generate_tests(
+                source_code,
+                analysis
+            )
+
+        st.session_state.generated_tests = generated_tests
+
+        # -------------------------------------------------
+        # Step 3: Execute Tests
+        # -------------------------------------------------
+
+        with st.spinner("▶️ Running generated tests..."):
+
+            execution_result = run_tests(
+                source_code,
+                generated_tests
+            )
+
+        st.session_state.execution_result = execution_result
+
+        # -------------------------------------------------
+        # Step 4: Self Improvement
+        # -------------------------------------------------
+
+        failed = (
+            "failed" in execution_result.lower()
+            or "error" in execution_result.lower()
+            or "error" in execution_result.lower()
+        )
+
+    if failed:
+
+        # -------------------------------------------------
+        # Step 4: Improve ORIGINAL SOURCE CODE
+        # -------------------------------------------------
+
+        with st.spinner(
+            "🔄 Tests failed. AI is improving the source code..."
+        ):
+
+            improved_source = improve_source_code(
+                source_code,
+                generated_tests,
+                execution_result
+            )
+
+        # Store improved SOURCE CODE as final result
+        st.session_state.final_code = improved_source
+
+        # -------------------------------------------------
+        # Step 5: Test the Improved Source Code
+        # -------------------------------------------------
+
+        with st.spinner(
+            "▶️ Testing the improved source code..."
+        ):
+
+            improved_result = run_tests(
+                improved_source,
+                generated_tests
+            )
+
+        st.session_state.execution_result = (
+            "INITIAL RUN:\n\n"
+            + execution_result
+            + "\n\n"
+            + "=" * 60
+            + "\n\n"
+            + "IMPROVED CODE RUN:\n\n"
+            + improved_result
+        )
+
+    else:
+
+        # Tests passed, so original source code is already valid
+        st.session_state.final_code = source_code
+
+
+# ---------------------------------------------------------
+# Results
+# ---------------------------------------------------------
 
 if st.session_state.analysis:
-    st.subheader("🧠 Agent Analysis")
-    st.markdown(st.session_state.analysis)
 
-if st.session_state.tests:
-    st.subheader("🧪 Generated PyTest Suite")
-    st.code(st.session_state.tests, language="python")
+    st.divider()
 
-if st.session_state.result:
-    result = st.session_state.result
-    st.subheader("📊 Test Result")
-    if result["passed"]:
-        st.success("All generated tests passed.")
+    st.subheader("🧠 1. AI Code Analysis")
+
+    st.markdown(
+        st.session_state.analysis
+    )
+
+
+# ---------------------------------------------------------
+# Generated Tests
+# ---------------------------------------------------------
+
+if st.session_state.generated_tests:
+
+    st.divider()
+
+    st.subheader("🧪 2. AI-Generated Test Code")
+
+    st.code(
+        st.session_state.generated_tests,
+        language="python"
+    )
+
+    st.download_button(
+        "⬇️ Download Generated Tests",
+        data=st.session_state.generated_tests,
+        file_name="generated_tests.py",
+        mime="text/x-python",
+        key="download_generated"
+    )
+
+
+# ---------------------------------------------------------
+# Execution Result
+# ---------------------------------------------------------
+
+if st.session_state.execution_result:
+
+    st.divider()
+
+    st.subheader("▶️ 3. Test Execution Result")
+
+    if "failed" in st.session_state.execution_result.lower():
+
+        st.error("Some tests failed.")
+
+    elif "error" in st.session_state.execution_result.lower():
+
+        st.warning("Execution completed with errors.")
+
     else:
-        st.error("Some tests failed after the improvement cycle.")
-    st.write(f"Improvement iterations: **{st.session_state.iterations}**")
-    with st.expander("Execution Output"):
-        st.code(result["output"], language="text")
+
+        st.success("Tests executed successfully.")
+
+    st.code(
+        st.session_state.execution_result,
+        language="text"
+    )
+
+
+# ---------------------------------------------------------
+# FINAL RESULTED CODE
+# ---------------------------------------------------------
+
+if st.session_state.final_code:
+
+    st.divider()
+
+    st.subheader("🎯 4. Final Resulted Code")
+
+    st.success(
+        "This is the final test code produced by TestPilot AI "
+        "after the self-improvement workflow."
+    )
+
+    st.code(
+        st.session_state.final_code,
+        language="python"
+    )
+
+    st.download_button(
+        "⬇️ Download Final Resulted Code",
+        data=st.session_state.final_code,
+        file_name="final_tests.py",
+        mime="text/x-python",
+        key="download_final"
+    )
+
+
+# ---------------------------------------------------------
+# Footer
+# ---------------------------------------------------------
 
 st.divider()
-st.caption("Hackathon prototype — PS-10: Self-Improving Test Generation Agent")
+
+st.caption(
+    "TestPilot AI • Self-Improving Test Generation Agent • "
+    "Hackathon Prototype"
+)
