@@ -25,6 +25,43 @@ Run:
 ```bash
 streamlit run app.py
 ```
+Project Diagram 
+```
+             👨‍💻 DEVELOPER
+                   │
+                   │ Python Code
+                   ▼
+          ┌─────────────────┐
+          │ 🧠 CODE ANALYZER│
+          └────────┬────────┘
+                   │
+             Testing Plan
+                   ▼
+          ┌─────────────────┐
+          │ 🧪 TEST         │
+          │    GENERATOR    │
+          └────────┬────────┘
+                   │
+              PyTest Code
+                   ▼
+          ┌─────────────────┐
+          │ ▶️ TEST RUNNER  │
+          └────────┬────────┘
+                   │
+              Test Result
+              /          \
+           PASS            FAIL
+            │                │
+            │                ▼
+            │       🔧 IMPROVEMENT
+            │          AGENT
+            │                │
+            │                ▼
+            │          Improved Test
+            │                │
+            └───────◄────────┘
+
+```
 
 ## Demo
 
